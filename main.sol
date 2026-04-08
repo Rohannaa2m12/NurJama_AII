@@ -142,3 +142,75 @@ library NJAddress {
     function requireContract(address a) internal view {
         if (a == address(0)) revert NJA_ZeroAddress();
         if (!_isContract(a)) revert NJA_NonContract();
+    }
+
+    function safeCall(address target, uint256 value, bytes memory data, uint256 gasStipend)
+        internal
+        returns (bytes memory ret)
+    {
+        if (target == address(0)) revert NJA_ZeroAddress();
+        bool ok;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            ok := call(gasStipend, target, value, add(data, 0x20), mload(data), 0, 0)
+            let size := returndatasize()
+            ret := mload(0x40)
+            mstore(0x40, add(ret, add(size, 0x60)))
+            mstore(ret, size)
+            returndatacopy(add(ret, 0x20), 0, size)
+        }
+        if (!ok) revert NJA_CallFailed();
+    }
+
+    function safeStaticCall(address target, bytes memory data, uint256 gasStipend)
+        internal
+        view
+        returns (bytes memory ret)
+    {
+        if (target == address(0)) revert NJA_ZeroAddress();
+        bool ok;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            ok := staticcall(gasStipend, target, add(data, 0x20), mload(data), 0, 0)
+            let size := returndatasize()
+            ret := mload(0x40)
+            mstore(0x40, add(ret, add(size, 0x60)))
+            mstore(ret, size)
+            returndatacopy(add(ret, 0x20), 0, size)
+        }
+        if (!ok) revert NJA_StaticFailed();
+    }
+}
+
+library NJSafeERC20 {
+    using NJAddress for address;
+
+    error NJT_ApproveFailed();
+    error NJT_TransferFailed();
+    error NJT_TransferFromFailed();
+
+    function _callOptionalReturn(address token, bytes memory data) private returns (bytes memory ret) {
+        ret = NJAddress.safeCall(token, 0, data, gasleft());
+        if (ret.length == 0) return ret;
+        // Some tokens do not return bool; if they do, require true.
+        if (ret.length >= 32) {
+            uint256 v = uint256(bytes32(ret[0:32]));
+            require(v == 1, "NJSafeERC20:false");
+        }
+    }
+
+    function safeTransfer(IERC20Minimal token, address to, uint256 value) internal {
+        bytes memory ret = _callOptionalReturn(
+            address(token),
+            abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, value)
+        );
+        if (ret.length >= 32 && abi.decode(ret, (bool)) == false) revert NJT_TransferFailed();
+    }
+
+    function safeTransferFrom(IERC20Minimal token, address from, address to, uint256 value) internal {
+        bytes memory ret = _callOptionalReturn(
+            address(token),
+            abi.encodeWithSelector(IERC20Minimal.transferFrom.selector, from, to, value)
+        );
+        if (ret.length >= 32 && abi.decode(ret, (bool)) == false) revert NJT_TransferFromFailed();
+    }
