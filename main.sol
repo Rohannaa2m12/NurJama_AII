@@ -718,3 +718,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
         uint256 maxSlippageBps,
         uint256 minDelay,
         uint256 maxDelay,
+        uint256 maxTtl
+    ) external onlyOwner {
+        if (maxInputPerRun == 0 || maxInputPerDay == 0) revert NJX_Zero();
+        if (maxSlippageBps > 1_500) revert NJX_Range();
+        if (minDelay < 1 || maxDelay < minDelay) revert NJX_Range();
+        if (maxTtl < 60 || maxTtl > 30 days) revert NJX_Range();
+
+        risk.maxInputPerRun = maxInputPerRun;
+        risk.maxInputPerDay = maxInputPerDay;
+        risk.maxSlippageBps = maxSlippageBps;
+        risk.minDelay = minDelay;
+        risk.maxDelay = maxDelay;
+        risk.maxTtl = maxTtl;
+
+        emit NJX_RiskParamsSet(keccak256("core"), maxInputPerRun, maxInputPerDay, maxSlippageBps);
+        emit NJX_RiskParamsSet(keccak256("delay"), minDelay, maxDelay, maxTtl);
+    }
+
+    function setVenue(address venue, bool allowed, bytes32 meta) external onlyOwner {
+        if (venue == address(0)) revert NJX_Zero();
+        venues[venue] = VenueConfig({allowed: allowed, addedAt: uint64(block.timestamp), meta: meta});
+        emit NJX_VenueSet(venue, allowed, meta);
+    }
+
+    function setToken(address token, bool allowed, uint8 decimalsHint, bytes32 meta) external onlyOwner {
+        if (token == address(0)) revert NJX_Zero();
+        if (decimalsHint > 36) revert NJX_Range();
+        tokens[token] = TokenConfig({allowed: allowed, decimalsHint: decimalsHint, addedAt: uint64(block.timestamp), meta: meta});
+        emit NJX_TokenSet(token, allowed, decimalsHint, meta);
+    }
+
+    function setModelKey(bytes32 model, bytes32 keyHash, bool enabled) external onlyOwner {
+        if (model == bytes32(0) || keyHash == bytes32(0)) revert NJX_Zero();
+        modelKeyEnabled[model][keyHash] = enabled;
+        emit NJX_ModelKeySet(model, keyHash, enabled);
+    }
+
+    function setOracleHint(bytes32 model, bytes32 hint) external onlyOwner {
+        if (model == bytes32(0)) revert NJX_Zero();
+        oracleHint[model] = hint;
+        emit NJX_OracleHint(model, hint);
+    }
+
+    // ============
+    // Vault tools
+    // ============
+    function sweep(address token, address to, uint256 amount) external nonReentrant onlyRole(ROLE_TREASURER) {
+        if (to == address(0)) revert NJX_Zero();
+        if (token == address(0)) {
+            // native
+            if (amount > address(this).balance) revert NJX_Range();
+            (bool ok,) = to.call{value: amount}("");
+            if (!ok) revert NJX_Forbidden();
+            emit NJX_VaultSweep(address(0), to, amount);
+            return;
+        }
+        IERC20Minimal(token).safeTransfer(to, amount);
+        emit NJX_VaultSweep(token, to, amount);
+    }
+
+    // ============
+    // Signal flow: commit → reveal
+    // ============
+    function computeSignalId(address author, bytes32 model, bytes32 commitHash, uint64 eta, uint64 ttl, uint256 nonce, uint64 bump, bytes32 tag)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked("NJ_SIGNAL", LOOM_ID, author, model, commitHash, eta, ttl, nonce, bump, tag, block.chainid));
+    }
+
+    function commitSignal(
