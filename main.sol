@@ -646,3 +646,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
                 keccak256(type(NurJama_AII).creationCode)
             )
         );
+        GENESIS = g;
+        LOOM_ID = keccak256(abi.encodePacked("NURJAMA_LOOM", g, address(this)));
+        BOOT_SALT = keccak256(abi.encodePacked("NURJAMA_BOOT", g, uint256(0x9d3f2b6c7a81e509)));
+
+        // Initial roles: owner is also admin/guardian/signal/executor/treasurer.
+        _grantRole(ROLE_ADMIN, msg.sender);
+        _grantRole(ROLE_GUARDIAN, msg.sender);
+        _grantRole(ROLE_SIGNALER, msg.sender);
+        _grantRole(ROLE_EXECUTOR, msg.sender);
+        _grantRole(ROLE_TREASURER, msg.sender);
+
+        // Default risk rails: conservative; changeable by owner (with events).
+        risk = RiskParams({
+            maxInputPerRun: 250_000 ether,
+            maxInputPerDay: 1_000_000 ether,
+            maxSlippageBps: 150, // 1.50%
+            minDelay: 30,
+            maxDelay: 3 days,
+            maxTtl: 7 days,
+            cooldownSeconds: 12,
+            maxCalls: 5,
+            maxCalldataBytes: 12_288,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0
+        });
+
+        arbiter = msg.sender;
+        paused = false;
+
+        emit NJX_Bootstrap(g, msg.sender, uint64(block.timestamp));
+        emit NJX_ArbiterSet(address(0), msg.sender);
+        emit NJX_ExecutionLimitSet(risk.maxCalls, risk.maxCalldataBytes);
+        emit NJX_CooldownSet(uint64(risk.cooldownSeconds));
+        emit NJX_ProofOfLife(keccak256(abi.encodePacked(g, block.timestamp)), uint64(block.timestamp));
+    }
+
+    // ============
+    // Receive
+    // ============
+    receive() external payable {}
+
+    // ============
+    // Admin / governance
+    // ============
+    function setArbiter(address next) external onlyOwner {
+        if (next == address(0)) revert NJX_Zero();
+        address old = arbiter;
+        arbiter = next;
+        emit NJX_ArbiterSet(old, next);
+    }
+
+    function setExecutionLimits(uint256 maxCalls, uint256 maxBytes) external onlyOwner {
+        if (maxCalls == 0 || maxCalls > 12) revert NJX_Range();
+        if (maxBytes < 512 || maxBytes > 98_304) revert NJX_Range();
+        risk.maxCalls = maxCalls;
+        risk.maxCalldataBytes = maxBytes;
+        emit NJX_ExecutionLimitSet(maxCalls, maxBytes);
+    }
+
+    function setCooldownSeconds(uint64 secondsMin) external onlyOwner {
+        if (secondsMin > 600) revert NJX_Range();
+        risk.cooldownSeconds = secondsMin;
+        emit NJX_CooldownSet(secondsMin);
+    }
+
+    function setRiskParams(
+        uint256 maxInputPerRun,
+        uint256 maxInputPerDay,
+        uint256 maxSlippageBps,
+        uint256 minDelay,
+        uint256 maxDelay,
