@@ -70,3 +70,75 @@ library NJBytes {
         out = uint256(toBytes32(b, start));
     }
 
+    function eq(bytes32 a, bytes32 c) internal pure returns (bool) {
+        return a == c;
+    }
+}
+
+library NJMath {
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+
+    function max(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a : b;
+    }
+
+    function clamp(uint256 x, uint256 lo, uint256 hi) internal pure returns (uint256) {
+        require(lo <= hi, "NJMath:range");
+        if (x < lo) return lo;
+        if (x > hi) return hi;
+        return x;
+    }
+
+    function satSub(uint256 a, uint256 b) internal pure returns (uint256) {
+        unchecked {
+            return a > b ? a - b : 0;
+        }
+    }
+
+    function ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b != 0, "NJMath:div0");
+        unchecked {
+            return a == 0 ? 0 : ((a - 1) / b) + 1;
+        }
+    }
+
+    function absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a >= b ? a - b : b - a;
+    }
+}
+
+library NJHash {
+    function mix(bytes32 a, bytes32 b, bytes32 c) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b, c));
+    }
+
+    function mix4(bytes32 a, bytes32 b, bytes32 c, bytes32 d) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b, c, d));
+    }
+
+    function mixBytes(bytes32 a, bytes memory b) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b));
+    }
+}
+
+library NJAddress {
+    error NJA_CallFailed();
+    error NJA_StaticFailed();
+    error NJA_DelegateFailed();
+    error NJA_ZeroAddress();
+    error NJA_NonContract();
+
+    function _isContract(address a) internal view returns (bool ok) {
+        uint256 s;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            s := extcodesize(a)
+        }
+        ok = s != 0;
+    }
+
+    function requireContract(address a) internal view {
+        if (a == address(0)) revert NJA_ZeroAddress();
+        if (!_isContract(a)) revert NJA_NonContract();
