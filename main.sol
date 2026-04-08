@@ -358,3 +358,75 @@ abstract contract NJRoles is NJOwnable2Step {
 abstract contract NJPausable is NJRoles {
     error NJP_Paused();
     error NJP_Same();
+
+    event NJP_PauseSet(bool paused, address indexed guardian);
+
+    bool public paused;
+
+    modifier whenActive() {
+        if (paused) revert NJP_Paused();
+        _;
+    }
+
+    function setPaused(bool on) external onlyRole(ROLE_GUARDIAN) {
+        if (paused == on) revert NJP_Same();
+        paused = on;
+        emit NJP_PauseSet(on, msg.sender);
+    }
+}
+
+/// @dev EIP-712 domain with deterministic salt.
+abstract contract NJEIP712 {
+    bytes32 internal immutable _DOMAIN_SEPARATOR;
+    uint256 internal immutable _DOMAIN_CHAIN_ID;
+
+    bytes32 internal constant _TYPEHASH_EIP712DOMAIN =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)");
+
+    constructor(string memory name, string memory version, bytes32 salt) {
+        _DOMAIN_CHAIN_ID = block.chainid;
+        _DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                _TYPEHASH_EIP712DOMAIN,
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                block.chainid,
+                address(this),
+                salt
+            )
+        );
+    }
+
+    function domainSeparator() public view returns (bytes32) {
+        if (block.chainid == _DOMAIN_CHAIN_ID) return _DOMAIN_SEPARATOR;
+        // Recompute on forks.
+        return keccak256(
+            abi.encode(
+                _TYPEHASH_EIP712DOMAIN,
+                keccak256(bytes("NurJama_AII")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this),
+                bytes32(uint256(0x4e55524a414d415f4149495f53414c545f5a45524f)) // "NURJAMA_AII_SALT_ZERO"
+            )
+        );
+    }
+
+    function _hashTypedData(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+    }
+}
+
+/// @dev Signature checks supporting EOAs and EIP-1271 smart accounts.
+library NJSign {
+    error NJS_BadSignature();
+    error NJS_BadSigner();
+    error NJS_Expired();
+
+    bytes4 internal constant MAGICVALUE = 0x1626ba7e;
+
+    function _recover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
+        if (sig.length != 65) revert NJS_BadSignature();
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
