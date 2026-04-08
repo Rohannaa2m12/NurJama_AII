@@ -430,3 +430,75 @@ library NJSign {
         bytes32 r;
         bytes32 s;
         uint8 v;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 0x20))
+            v := byte(0, calldataload(add(sig.offset, 0x40)))
+        }
+        // EIP-2 / malleability check for s.
+        if (uint256(s) > 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) revert NJS_BadSignature();
+        if (v != 27 && v != 28) revert NJS_BadSignature();
+        address signer = ecrecover(digest, v, r, s);
+        if (signer == address(0)) revert NJS_BadSignature();
+        return signer;
+    }
+
+    function isValid(address signer, bytes32 digest, bytes calldata sig) internal view returns (bool) {
+        if (signer.code.length == 0) {
+            return _recover(digest, sig) == signer;
+        }
+        try IERC1271(signer).isValidSignature(digest, sig) returns (bytes4 magic) {
+            return magic == MAGICVALUE;
+        } catch {
+            return false;
+        }
+    }
+}
+
+/// @notice NurJama_AII: onchain signal registry + risk-gated execution governor.
+contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
+    using NJMath for uint256;
+    using NJSafeERC20 for IERC20Minimal;
+
+    // ============
+    // Errors
+    // ============
+    error NJX_Zero();
+    error NJX_NotFound();
+    error NJX_Already();
+    error NJX_Disabled();
+    error NJX_Range();
+    error NJX_TooLong();
+    error NJX_TooSoon();
+    error NJX_TooLate();
+    error NJX_BadNonce();
+    error NJX_BadState();
+    error NJX_BadVenue();
+    error NJX_BadToken();
+    error NJX_Risk();
+    error NJX_Forbidden();
+    error NJX_Slippage();
+    error NJX_ValueMismatch();
+    error NJX_SignalMismatch();
+    error NJX_Untrusted();
+    error NJX_Cooldown();
+    error NJX_Lock();
+    error NJX_InvalidBytes();
+
+    // ============
+    // Events
+    // ============
+    event NJX_Bootstrap(bytes32 indexed genesis, address indexed owner, uint64 at);
+    event NJX_VenueSet(address indexed venue, bool allowed, bytes32 meta);
+    event NJX_TokenSet(address indexed token, bool allowed, uint8 decimalsHint, bytes32 meta);
+    event NJX_SignalCommitted(bytes32 indexed signalId, address indexed author, bytes32 indexed model, uint64 eta, uint64 ttl);
+    event NJX_SignalRevealed(bytes32 indexed signalId, address indexed author, bytes32 indexed leaf, bytes32 paramsHash);
+    event NJX_RunQueued(bytes32 indexed runId, bytes32 indexed signalId, address indexed venue, uint64 executeAfter);
+    event NJX_RunExecuted(bytes32 indexed runId, bytes32 indexed signalId, uint256 spent, uint256 received);
+    event NJX_RunCancelled(bytes32 indexed runId, bytes32 indexed signalId, address indexed by);
+    event NJX_VaultSweep(address indexed token, address indexed to, uint256 amount);
+    event NJX_RiskParamsSet(bytes32 indexed key, uint256 a, uint256 b, uint256 c);
+    event NJX_ModelKeySet(bytes32 indexed model, bytes32 indexed keyHash, bool enabled);
+    event NJX_OracleHint(bytes32 indexed model, bytes32 indexed hint);
+    event NJX_NonceUsed(address indexed author, uint256 indexed nonce, bytes32 indexed tag);
