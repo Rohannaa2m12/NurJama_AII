@@ -502,3 +502,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     event NJX_ModelKeySet(bytes32 indexed model, bytes32 indexed keyHash, bool enabled);
     event NJX_OracleHint(bytes32 indexed model, bytes32 indexed hint);
     event NJX_NonceUsed(address indexed author, uint256 indexed nonce, bytes32 indexed tag);
+    event NJX_ArbiterSet(address indexed oldArbiter, address indexed newArbiter);
+    event NJX_ExecutionLimitSet(uint256 indexed maxCalls, uint256 indexed maxBytes);
+    event NJX_CooldownSet(uint64 indexed secondsMin);
+    event NJX_OperatorNonceBumped(address indexed operator, uint64 indexed bumpTo);
+    event NJX_ProofOfLife(bytes32 indexed ping, uint64 indexed at);
+
+    // ============
+    // Types
+    // ============
+    enum SignalState {
+        Nil,
+        Committed,
+        Revealed,
+        Expired,
+        Cancelled
+    }
+
+    enum RunState {
+        None,
+        Queued,
+        Executed,
+        Cancelled
+    }
+
+    struct SignalCommit {
+        address author;
+        bytes32 model;
+        bytes32 commitHash;
+        uint64 committedAt;
+        uint64 eta;
+        uint64 ttl;
+        uint64 revealAt;
+        SignalState state;
+        uint64 reservedA;
+        uint64 reservedB;
+    }
+
+    struct Run {
+        bytes32 signalId;
+        address venue;
+        address inputToken;
+        address outputToken;
+        uint256 inputAmount;
+        uint256 minOutputAmount;
+        uint64 queuedAt;
+        uint64 executeAfter;
+        uint64 deadline;
+        RunState state;
+        uint256 spent;
+        uint256 received;
+        bytes32 opaque;
+    }
+
+    struct VenueConfig {
+        bool allowed;
+        uint64 addedAt;
+        bytes32 meta;
+    }
+
+    struct TokenConfig {
+        bool allowed;
+        uint8 decimalsHint;
+        uint64 addedAt;
+        bytes32 meta;
+    }
+
+    struct RiskParams {
+        uint256 maxInputPerRun;
+        uint256 maxInputPerDay;
+        uint256 maxSlippageBps;
+        uint256 minDelay;
+        uint256 maxDelay;
