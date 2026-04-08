@@ -286,3 +286,75 @@ abstract contract NJRoles is NJOwnable2Step {
 
     event NJR_RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
     event NJR_RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+    event NJR_RoleAdminChanged(bytes32 indexed role, bytes32 indexed oldAdmin, bytes32 indexed newAdmin);
+
+    mapping(bytes32 role => mapping(address account => bool)) internal _hasRole;
+    mapping(bytes32 role => bytes32) internal _adminOf;
+
+    bytes32 public constant ROLE_ADMIN = keccak256("NURJAMA_ROLE_ADMIN");
+    bytes32 public constant ROLE_GUARDIAN = keccak256("NURJAMA_ROLE_GUARDIAN");
+    bytes32 public constant ROLE_SIGNALER = keccak256("NURJAMA_ROLE_SIGNALER");
+    bytes32 public constant ROLE_EXECUTOR = keccak256("NURJAMA_ROLE_EXECUTOR");
+    bytes32 public constant ROLE_TREASURER = keccak256("NURJAMA_ROLE_TREASURER");
+
+    modifier onlyRole(bytes32 role) {
+        if (!_hasRole[role][msg.sender]) revert NJR_NotRole(role);
+        _;
+    }
+
+    function hasRole(bytes32 role, address a) external view returns (bool) {
+        return _hasRole[role][a];
+    }
+
+    function getRoleAdmin(bytes32 role) external view returns (bytes32) {
+        bytes32 a = _adminOf[role];
+        return a == bytes32(0) ? ROLE_ADMIN : a;
+    }
+
+    function _roleAdmin(bytes32 role) internal view returns (bytes32) {
+        bytes32 a = _adminOf[role];
+        return a == bytes32(0) ? ROLE_ADMIN : a;
+    }
+
+    function setRoleAdmin(bytes32 role, bytes32 newAdmin) external onlyOwner {
+        if (role == bytes32(0) || newAdmin == bytes32(0)) revert NJR_BadInput();
+        bytes32 oldAdmin = _roleAdmin(role);
+        _adminOf[role] = newAdmin;
+        emit NJR_RoleAdminChanged(role, oldAdmin, newAdmin);
+    }
+
+    function grantRole(bytes32 role, address a) external {
+        bytes32 admin = _roleAdmin(role);
+        if (!_hasRole[admin][msg.sender] && msg.sender != owner) revert NJO_Unauthorized();
+        _grantRole(role, a);
+    }
+
+    function revokeRole(bytes32 role, address a) external {
+        bytes32 admin = _roleAdmin(role);
+        if (!_hasRole[admin][msg.sender] && msg.sender != owner) revert NJO_Unauthorized();
+        _revokeRole(role, a);
+    }
+
+    function renounceRole(bytes32 role) external {
+        _revokeRole(role, msg.sender);
+    }
+
+    function _grantRole(bytes32 role, address a) internal {
+        if (role == bytes32(0) || a == address(0)) revert NJR_BadInput();
+        if (_hasRole[role][a]) return;
+        _hasRole[role][a] = true;
+        emit NJR_RoleGranted(role, a, msg.sender);
+    }
+
+    function _revokeRole(bytes32 role, address a) internal {
+        if (role == bytes32(0) || a == address(0)) revert NJR_BadInput();
+        if (!_hasRole[role][a]) return;
+        _hasRole[role][a] = false;
+        emit NJR_RoleRevoked(role, a, msg.sender);
+    }
+}
+
+/// @dev A small pausability module (guardian-controlled).
+abstract contract NJPausable is NJRoles {
+    error NJP_Paused();
+    error NJP_Same();
