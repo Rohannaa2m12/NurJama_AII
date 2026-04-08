@@ -214,3 +214,75 @@ library NJSafeERC20 {
         );
         if (ret.length >= 32 && abi.decode(ret, (bool)) == false) revert NJT_TransferFromFailed();
     }
+
+    function safeApprove(IERC20Minimal token, address spender, uint256 value) internal {
+        bytes memory ret = _callOptionalReturn(
+            address(token),
+            abi.encodeWithSelector(IERC20Minimal.approve.selector, spender, value)
+        );
+        if (ret.length >= 32 && abi.decode(ret, (bool)) == false) revert NJT_ApproveFailed();
+    }
+}
+
+/// @dev Compact reentrancy guard with explicit states.
+abstract contract NJReentrancy {
+    error NJR_Reentrancy();
+    uint256 private _njLock;
+
+    modifier nonReentrant() {
+        if (_njLock == 2) revert NJR_Reentrancy();
+        _njLock = 2;
+        _;
+        _njLock = 1;
+    }
+
+    constructor() {
+        _njLock = 1;
+    }
+}
+
+/// @dev Two-step ownership for safe handovers.
+abstract contract NJOwnable2Step {
+    error NJO_Unauthorized();
+    error NJO_Zero();
+    error NJO_PendingMismatch();
+
+    event NJO_OwnerProposed(address indexed owner, address indexed proposed);
+    event NJO_OwnerAccepted(address indexed oldOwner, address indexed newOwner);
+
+    address public owner;
+    address public pendingOwner;
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NJO_Unauthorized();
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function proposeOwner(address next) external onlyOwner {
+        if (next == address(0)) revert NJO_Zero();
+        pendingOwner = next;
+        emit NJO_OwnerProposed(owner, next);
+    }
+
+    function acceptOwner() external {
+        address p = pendingOwner;
+        if (p == address(0)) revert NJO_Zero();
+        if (msg.sender != p) revert NJO_PendingMismatch();
+        address old = owner;
+        owner = p;
+        pendingOwner = address(0);
+        emit NJO_OwnerAccepted(old, p);
+    }
+}
+
+/// @dev Role system: small, explicit, and gas-conscious.
+abstract contract NJRoles is NJOwnable2Step {
+    error NJR_NotRole(bytes32 role);
+    error NJR_BadInput();
+
+    event NJR_RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event NJR_RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
