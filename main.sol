@@ -574,3 +574,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
         uint256 maxSlippageBps;
         uint256 minDelay;
         uint256 maxDelay;
+        uint256 maxTtl;
+        uint256 cooldownSeconds;
+        uint256 maxCalls;
+        uint256 maxCalldataBytes;
+        uint256 reserved0;
+        uint256 reserved1;
+        uint256 reserved2;
+    }
+
+    // ============
+    // Storage
+    // ============
+    bytes32 public immutable GENESIS;
+    bytes32 public immutable LOOM_ID;
+    bytes32 public immutable BOOT_SALT;
+
+    // model => keyHash => enabled
+    mapping(bytes32 model => mapping(bytes32 keyHash => bool enabled)) public modelKeyEnabled;
+    mapping(bytes32 model => bytes32 hint) public oracleHint;
+
+    // signalId => commit struct
+    mapping(bytes32 signalId => SignalCommit) public signals;
+    // runId => run struct
+    mapping(bytes32 runId => Run) public runs;
+
+    // allowlists
+    mapping(address venue => VenueConfig) public venues;
+    mapping(address token => TokenConfig) public tokens;
+
+    // nonces and operator bumps
+    mapping(address author => uint256 nonce) public authorNonce;
+    mapping(address operator => uint64 bump) public operatorNonceBump;
+
+    // spending rails
+    mapping(uint64 day => uint256 spent) public dailySpent;
+    mapping(bytes32 signalId => bool used) public consumedSignal;
+
+    // governance knobs
+    RiskParams public risk;
+    address public arbiter;
+
+    // ============
+    // Constants (distinct, non-OZ naming)
+    // ============
+    uint256 public constant BPS = 10_000;
+    uint256 public constant NJ_VERSION_SEM = 0x0001000000000000000000000000000000000000000000000000000000000001;
+    bytes32 public constant TYPEHASH_COMMIT =
+        keccak256("NJCommit(bytes32 signalId,bytes32 model,bytes32 commitHash,uint64 eta,uint64 ttl,uint256 nonce,uint64 bump,bytes32 tag)");
+    bytes32 public constant TYPEHASH_REVEAL =
+        keccak256("NJReveal(bytes32 signalId,bytes32 leaf,bytes32 paramsHash,uint256 nonce,uint64 bump,bytes32 tag)");
+    bytes32 public constant TYPEHASH_QUEUE =
+        keccak256(
+            "NJQueue(bytes32 runId,bytes32 signalId,address venue,address inputToken,address outputToken,uint256 inputAmount,uint256 minOutputAmount,uint64 executeAfter,uint64 deadline,uint256 nonce,uint64 bump,bytes32 tag)"
+        );
+
+    // ============
+    // Constructor
+    // ============
+    constructor()
+        NJEIP712("NurJama_AII", "1", bytes32(uint256(0x4e55524a414d415f4149495f53414c545f5a45524f)))
+    {
+        // Deterministic but unguessable enough for uniqueness within this codebase:
+        // it mixes chain id, deployer, timestamp, and codehash of this contract at creation.
+        bytes32 g = keccak256(
+            abi.encodePacked(
+                block.chainid,
+                msg.sender,
+                block.timestamp,
+                block.prevrandao,
+                keccak256(type(NurJama_AII).creationCode)
+            )
+        );
