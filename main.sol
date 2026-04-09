@@ -1366,3 +1366,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     }
 
     function describeSignal(bytes32 signalId)
+        external
+        view
+        returns (
+            address author,
+            bytes32 model,
+            bytes32 commitHash,
+            uint64 committedAt,
+            uint64 eta,
+            uint64 ttl,
+            uint64 revealAt,
+            SignalState state
+        )
+    {
+        SignalCommit storage s = signals[signalId];
+        return (s.author, s.model, s.commitHash, s.committedAt, s.eta, s.ttl, s.revealAt, s.state);
+    }
+
+    function describeRun(bytes32 runId)
+        external
+        view
+        returns (
+            bytes32 signalId,
+            address venue,
+            address inputToken,
+            address outputToken,
+            uint256 inputAmount,
+            uint256 minOutputAmount,
+            uint64 queuedAt,
+            uint64 executeAfter,
+            uint64 deadline,
+            RunState state,
+            uint256 spent,
+            uint256 received,
+            bytes32 opaque
+        )
+    {
+        Run storage r = runs[runId];
+        return (
+            r.signalId,
+            r.venue,
+            r.inputToken,
+            r.outputToken,
+            r.inputAmount,
+            r.minOutputAmount,
+            r.queuedAt,
+            r.executeAfter,
+            r.deadline,
+            r.state,
+            r.spent,
+            r.received,
+            r.opaque
+        );
+    }
+
+    function isVenueAllowed(address venue) external view returns (bool) {
+        return venues[venue].allowed;
+    }
+
+    function isTokenAllowed(address token) external view returns (bool) {
+        return tokens[token].allowed;
+    }
+
+    function remainingCooldown(address executor) external view returns (uint64 secondsLeft) {
+        uint64 last = _lastExec[executor];
+        uint64 cd = uint64(risk.cooldownSeconds);
+        if (cd == 0 || last == 0) return 0;
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs >= last + cd) return 0;
+        return (last + cd) - nowTs;
+    }
+
+    function canExecute(bytes32 runId) external view returns (bool ok, bytes32 reason) {
