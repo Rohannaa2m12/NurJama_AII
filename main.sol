@@ -1078,3 +1078,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     // ============
     // Execute
     // ============
+    struct Call {
+        address target;
+        uint256 value;
+        bytes data;
+    }
+
+    function executeRun(bytes32 runId, Call[] calldata calls) external whenActive nonReentrant onlyRole(ROLE_EXECUTOR) {
+        Run storage r = runs[runId];
+        if (r.state != RunState.Queued) revert NJX_BadState();
+        if (block.timestamp < r.executeAfter) revert NJX_TooSoon();
+        if (block.timestamp > r.deadline) revert NJX_TooLate();
+        if (calls.length == 0 || calls.length > risk.maxCalls) revert NJX_Range();
+
+        // Enforce cooldown per executor to reduce griefing and repeated failures.
+        _enforceCooldown(msg.sender);
+
+        // Risk rails: daily and per-run.
+        _spendGuard(r.inputAmount);
+
+        // Ensure the run's signal is revealed and unconsumed.
+        _requireSignalReady(r.signalId);
+        if (consumedSignal[r.signalId]) revert NJX_Risk();
+
+        // Pull tokens into this contract before venue calls.
+        _pullInput(r.inputToken, r.inputAmount);
+
+        uint256 beforeOut = _balanceOf(r.outputToken);
+        uint256 beforeIn = _balanceOf(r.inputToken);
+
+        // Approve venue for the exact input amount (best-effort).
+        _approveExact(r.inputToken, r.venue, r.inputAmount);
+
+        // Execute calls; all must be either to venue or to input/output token (to allow permit/approve patterns).
+        uint256 calldataBytes = 0;
+        for (uint256 i = 0; i < calls.length; i++) {
+            calldataBytes += calls[i].data.length;
+        }
+        if (calldataBytes > risk.maxCalldataBytes) revert NJX_Range();
+
+        for (uint256 j = 0; j < calls.length; j++) {
+            address t = calls[j].target;
+            if (t == address(0)) revert NJX_Zero();
+            bool okVenue = (t == r.venue);
+            bool okToken = (t == r.inputToken || t == r.outputToken);
+            if (!(okVenue || okToken)) revert NJX_BadVenue();
+            NJAddress.safeCall(t, calls[j].value, calls[j].data, gasleft());
+        }
+
+        uint256 afterOut = _balanceOf(r.outputToken);
+        uint256 afterIn = _balanceOf(r.inputToken);
+
+        uint256 received = afterOut.satSub(beforeOut);
+        uint256 spent = beforeIn.satSub(afterIn);
+
+        if (spent > r.inputAmount) {
+            // If a venue drained extra input (should not happen with exact approve), treat as risk violation.
+            revert NJX_Risk();
+        }
+
+        // Slippage / min-output check.
+        if (received < r.minOutputAmount) revert NJX_Slippage();
+
+        // Mark as executed and consume the signal.
+        r.state = RunState.Executed;
+        r.spent = spent;
+        r.received = received;
+        consumedSignal[r.signalId] = true;
+
+        emit NJX_RunExecuted(runId, r.signalId, spent, received);
+    }
+
+    // ============
