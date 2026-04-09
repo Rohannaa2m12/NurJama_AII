@@ -1150,3 +1150,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     }
 
     // ============
+    // Introspection / helpers
+    // ============
+    function dayKey(uint256 ts) public pure returns (uint64) {
+        return uint64(ts / 1 days);
+    }
+
+    function signalIsLive(bytes32 signalId) external view returns (bool) {
+        SignalCommit storage s = signals[signalId];
+        if (s.state == SignalState.Nil) return false;
+        if (s.state == SignalState.Cancelled) return false;
+        if (s.state == SignalState.Expired) return false;
+        if (s.state == SignalState.Committed) return block.timestamp <= s.eta + s.ttl;
+        if (s.state == SignalState.Revealed) return block.timestamp <= s.eta + s.ttl;
+        return false;
+    }
+
+    function runState(bytes32 runId) external view returns (RunState) {
+        return runs[runId].state;
+    }
+
+    function previewDailyRemaining(uint256 ts) external view returns (uint256 remaining) {
+        uint64 d = dayKey(ts);
+        uint256 spent = dailySpent[d];
+        if (spent >= risk.maxInputPerDay) return 0;
+        return risk.maxInputPerDay - spent;
+    }
+
+    function bumpOperatorNonce(uint64 bumpTo) external whenActive {
+        if (!_hasRole[ROLE_SIGNALER][msg.sender] && !_hasRole[ROLE_EXECUTOR][msg.sender]) revert NJX_Forbidden();
+        if (bumpTo <= operatorNonceBump[msg.sender]) revert NJX_BadNonce();
+        operatorNonceBump[msg.sender] = bumpTo;
+        emit NJX_OperatorNonceBumped(msg.sender, bumpTo);
+    }
+
+    function ping(bytes32 pingHash) external {
+        emit NJX_ProofOfLife(pingHash, uint64(block.timestamp));
+    }
+
+    // ============
+    // Internal: risk rails
+    // ============
+    mapping(address executor => uint64 lastExecAt) internal _lastExec;
+
+    function _enforceCooldown(address executor) internal {
+        uint64 last = _lastExec[executor];
+        uint64 nowTs = uint64(block.timestamp);
+        uint64 cd = uint64(risk.cooldownSeconds);
+        if (cd != 0 && last != 0 && nowTs < last + cd) revert NJX_Cooldown();
+        _lastExec[executor] = nowTs;
+    }
+
+    function _spendGuard(uint256 inputAmount) internal {
+        if (inputAmount == 0) revert NJX_Zero();
+        if (inputAmount > risk.maxInputPerRun) revert NJX_Risk();
+        uint64 d = dayKey(block.timestamp);
+        uint256 soFar = dailySpent[d];
+        if (soFar + inputAmount > risk.maxInputPerDay) revert NJX_Risk();
+        dailySpent[d] = soFar + inputAmount;
+    }
+
+    function _requireSignalReady(bytes32 signalId) internal view {
+        SignalCommit storage s = signals[signalId];
+        if (s.state == SignalState.Nil) revert NJX_NotFound();
+        if (s.state == SignalState.Cancelled) revert NJX_Disabled();
+        if (s.state == SignalState.Expired) revert NJX_Disabled();
+        if (s.state != SignalState.Revealed) revert NJX_BadState();
+        if (block.timestamp > s.eta + s.ttl) revert NJX_TooLate();
+    }
+
+    function _requireVenueAndTokens(address venue, address inputToken, address outputToken) internal view {
+        if (!venues[venue].allowed) revert NJX_Untrusted();
+        if (!tokens[inputToken].allowed) revert NJX_BadToken();
