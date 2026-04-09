@@ -1438,3 +1438,58 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     }
 
     function canExecute(bytes32 runId) external view returns (bool ok, bytes32 reason) {
+        Run storage r = runs[runId];
+        if (r.state != RunState.Queued) return (false, keccak256("state"));
+        if (block.timestamp < r.executeAfter) return (false, keccak256("early"));
+        if (block.timestamp > r.deadline) return (false, keccak256("late"));
+        SignalCommit storage s = signals[r.signalId];
+        if (s.state != SignalState.Revealed) return (false, keccak256("signal"));
+        if (venues[r.venue].allowed == false) return (false, keccak256("venue"));
+        if (tokens[r.inputToken].allowed == false) return (false, keccak256("inToken"));
+        if (tokens[r.outputToken].allowed == false) return (false, keccak256("outToken"));
+        return (true, bytes32(0));
+    }
+
+    // ============
+    // Extra guardrails and misc.
+    // ============
+    function emergencyInvalidateSignal(bytes32 signalId) external onlyRole(ROLE_GUARDIAN) {
+        SignalCommit storage s = signals[signalId];
+        if (s.state == SignalState.Nil) revert NJX_NotFound();
+        if (s.state == SignalState.Cancelled) revert NJX_Already();
+        s.state = SignalState.Cancelled;
+    }
+
+    function emergencyInvalidateRun(bytes32 runId) external onlyRole(ROLE_GUARDIAN) {
+        Run storage r = runs[runId];
+        if (r.state == RunState.None) revert NJX_NotFound();
+        if (r.state == RunState.Executed) revert NJX_BadState();
+        r.state = RunState.Cancelled;
+        emit NJX_RunCancelled(runId, r.signalId, msg.sender);
+    }
+
+    function emergencySetSpent(uint64 day, uint256 value) external onlyOwner {
+        dailySpent[day] = value;
+    }
+
+    function emergencyReseedTable(uint256 i, uint256 v) external onlyOwner {
+        _njTable[i % _njTable.length] = v;
+    }
+
+    // ============
+    // Solidity "calldata bytes32 ret" helper (kept for tooling)
+    // ============
+    function decodeBytes32At(bytes calldata data, uint256 offset) external pure returns (bytes32) {
+        if (data.length < offset + 32) revert NJX_InvalidBytes();
+        bytes32 out;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            out := calldataload(add(data.offset, offset))
+        }
+        return out;
+    }
+
+    // ============
+    // End
+    // ============
+}
