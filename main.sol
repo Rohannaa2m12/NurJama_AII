@@ -1222,3 +1222,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     function _requireVenueAndTokens(address venue, address inputToken, address outputToken) internal view {
         if (!venues[venue].allowed) revert NJX_Untrusted();
         if (!tokens[inputToken].allowed) revert NJX_BadToken();
+        if (!tokens[outputToken].allowed) revert NJX_BadToken();
+        if (inputToken == outputToken) revert NJX_Range();
+    }
+
+    // ============
+    // Internal: token plumbing
+    // ============
+    function _balanceOf(address token) internal view returns (uint256) {
+        if (token == address(0)) return address(this).balance;
+        return IERC20Minimal(token).balanceOf(address(this));
+    }
+
+    function _pullInput(address token, uint256 amount) internal {
+        if (token == address(0)) {
+            // native funding must be pre-deposited
+            if (address(this).balance < amount) revert NJX_Range();
+            return;
+        }
+        // Pull from the arbiter by default; this keeps key management offchain.
+        // If you want to fund via other mechanisms, transfer tokens into the contract first then set arbiter accordingly.
+        IERC20Minimal(token).safeTransferFrom(arbiter, address(this), amount);
+    }
+
+    function _approveExact(address token, address spender, uint256 amount) internal {
+        if (token == address(0)) return;
+        IERC20Minimal t = IERC20Minimal(token);
+        uint256 cur = t.allowance(address(this), spender);
+        if (cur == amount) return;
+        if (cur != 0) {
+            // Some tokens require setting to 0 first.
+            t.safeApprove(spender, 0);
+        }
+        t.safeApprove(spender, amount);
+    }
+
+    // ============
+    // Extra: curated bytes helpers (used by offchain bots)
+    // ============
+    function packParams(
+        address venue,
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256 minOutputAmount,
+        uint64 executeAfter,
+        uint64 deadline,
+        bytes32 salt
+    ) external pure returns (bytes memory) {
+        return abi.encode(venue, inputToken, outputToken, inputAmount, minOutputAmount, executeAfter, deadline, salt);
+    }
+
+    function hashParams(bytes calldata params) external pure returns (bytes32) {
+        return keccak256(params);
+    }
+
+    function computeCommitHash(bytes32 signalId, bytes32 leaf, bytes32 paramsHash) external view returns (bytes32) {
+        return keccak256(abi.encodePacked("reveal", LOOM_ID, signalId, leaf, paramsHash));
+    }
+
+    // ============
+    // “AI bot feel”: model score gates
+    // ============
+    // The contract itself does not compute scores; it enforces that a (model, keyHash)
+    // pair is enabled and that the leaf references it.
+    //
+    // leaf format (offchain convention):
+    //   leaf = keccak256(abi.encodePacked(model, keyHash, scoreQ64, horizonSec, extra))
+    //
+    // This makes onchain verification cheap while keeping model logic offchain.
+    function validateLeaf(bytes32 model, bytes32 keyHash, bytes32 leaf) public view returns (bool) {
+        if (!modelKeyEnabled[model][keyHash]) return false;
+        // The contract does not parse the leaf; it ensures the allowlisted key is part of the commitment.
