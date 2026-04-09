@@ -934,3 +934,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
                 minOutputAmount,
                 executeAfter,
                 deadline,
+                tag,
+                block.chainid
+            )
+        );
+    }
+
+    function queueRun(
+        bytes32 signalId,
+        address venue,
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256 minOutputAmount,
+        uint64 executeAfter,
+        uint64 deadline,
+        bytes32 opaque
+    ) external whenActive onlyRole(ROLE_EXECUTOR) returns (bytes32 runId) {
+        _requireSignalReady(signalId);
+        _requireVenueAndTokens(venue, inputToken, outputToken);
+
+        if (inputAmount == 0 || minOutputAmount == 0) revert NJX_Zero();
+        if (inputAmount > risk.maxInputPerRun) revert NJX_Risk();
+        if (executeAfter < uint64(block.timestamp) + uint64(risk.minDelay)) revert NJX_TooSoon();
+        if (executeAfter > uint64(block.timestamp) + uint64(risk.maxDelay)) revert NJX_TooLate();
+        if (deadline <= executeAfter) revert NJX_Range();
+        if (deadline > uint64(block.timestamp) + uint64(risk.maxTtl)) revert NJX_Range();
+
+        bytes32 tag = keccak256(abi.encodePacked("queue", msg.sender, signalId, venue, inputAmount, GENESIS, opaque));
+        runId = computeRunId(signalId, venue, inputToken, outputToken, inputAmount, minOutputAmount, executeAfter, deadline, tag);
+        Run storage r = runs[runId];
+        if (r.state != RunState.None) revert NJX_Already();
+
+        runs[runId] = Run({
+            signalId: signalId,
+            venue: venue,
+            inputToken: inputToken,
+            outputToken: outputToken,
+            inputAmount: inputAmount,
+            minOutputAmount: minOutputAmount,
+            queuedAt: uint64(block.timestamp),
+            executeAfter: executeAfter,
+            deadline: deadline,
+            state: RunState.Queued,
+            spent: 0,
+            received: 0,
+            opaque: tag
+        });
+
+        emit NJX_RunQueued(runId, signalId, venue, executeAfter);
+    }
+
+    function queueRunBySig(
+        address operator,
+        bytes32 runId,
+        bytes32 signalId,
+        address venue,
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256 minOutputAmount,
+        uint64 executeAfter,
+        uint64 deadline,
+        uint256 nonce,
+        uint64 bump,
+        bytes32 tag,
+        bytes calldata signature
+    ) external whenActive returns (bytes32 idOut) {
+        if (operator == address(0)) revert NJX_Zero();
+        if (!_hasRole[ROLE_EXECUTOR][operator]) revert NJX_Forbidden();
+        if (bump < operatorNonceBump[operator]) revert NJX_BadNonce();
+        if (nonce != authorNonce[operator]) revert NJX_BadNonce();
+
