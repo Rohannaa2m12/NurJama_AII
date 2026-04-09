@@ -1006,3 +1006,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
         if (bump < operatorNonceBump[operator]) revert NJX_BadNonce();
         if (nonce != authorNonce[operator]) revert NJX_BadNonce();
 
+        _requireSignalReady(signalId);
+        _requireVenueAndTokens(venue, inputToken, outputToken);
+
+        if (inputAmount == 0 || minOutputAmount == 0) revert NJX_Zero();
+        if (inputAmount > risk.maxInputPerRun) revert NJX_Risk();
+        if (executeAfter < uint64(block.timestamp) + uint64(risk.minDelay)) revert NJX_TooSoon();
+        if (executeAfter > uint64(block.timestamp) + uint64(risk.maxDelay)) revert NJX_TooLate();
+        if (deadline <= executeAfter) revert NJX_Range();
+        if (deadline > uint64(block.timestamp) + uint64(risk.maxTtl)) revert NJX_Range();
+
+        bytes32 digest = _hashTypedData(
+            keccak256(
+                abi.encode(
+                    TYPEHASH_QUEUE,
+                    runId,
+                    signalId,
+                    venue,
+                    inputToken,
+                    outputToken,
+                    inputAmount,
+                    minOutputAmount,
+                    executeAfter,
+                    deadline,
+                    nonce,
+                    bump,
+                    tag
+                )
+            )
+        );
+        if (!NJSign.isValid(operator, digest, signature)) revert NJX_Forbidden();
+
+        authorNonce[operator] = nonce + 1;
+        operatorNonceBump[operator] = bump;
+        emit NJX_NonceUsed(operator, nonce, tag);
+        emit NJX_OperatorNonceBumped(operator, bump);
+
+        Run storage r = runs[runId];
+        if (r.state != RunState.None) revert NJX_Already();
+
+        runs[runId] = Run({
+            signalId: signalId,
+            venue: venue,
+            inputToken: inputToken,
+            outputToken: outputToken,
+            inputAmount: inputAmount,
+            minOutputAmount: minOutputAmount,
+            queuedAt: uint64(block.timestamp),
+            executeAfter: executeAfter,
+            deadline: deadline,
+            state: RunState.Queued,
+            spent: 0,
+            received: 0,
+            opaque: tag
+        });
+
+        emit NJX_RunQueued(runId, signalId, venue, executeAfter);
+        return runId;
+    }
+
+    function cancelRun(bytes32 runId) external whenActive {
+        Run storage r = runs[runId];
+        if (r.state == RunState.None) revert NJX_NotFound();
+        if (r.state != RunState.Queued) revert NJX_BadState();
+        SignalCommit storage s = signals[r.signalId];
+        if (msg.sender != s.author && msg.sender != owner && !_hasRole[ROLE_GUARDIAN][msg.sender]) revert NJX_Forbidden();
+        r.state = RunState.Cancelled;
+        emit NJX_RunCancelled(runId, r.signalId, msg.sender);
+    }
+
+    // ============
+    // Execute
+    // ============
