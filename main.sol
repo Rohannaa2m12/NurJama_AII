@@ -790,3 +790,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
     }
 
     function commitSignal(
+        bytes32 model,
+        bytes32 commitHash,
+        uint64 eta,
+        uint64 ttl
+    ) external whenActive onlyRole(ROLE_SIGNALER) returns (bytes32 signalId) {
+        if (model == bytes32(0) || commitHash == bytes32(0)) revert NJX_Zero();
+        if (ttl == 0 || ttl > risk.maxTtl) revert NJX_Range();
+        if (eta < uint64(block.timestamp) + uint64(risk.minDelay)) revert NJX_TooSoon();
+        if (eta > uint64(block.timestamp) + uint64(risk.maxDelay)) revert NJX_TooLate();
+
+        uint256 nonce = authorNonce[msg.sender];
+        authorNonce[msg.sender] = nonce + 1;
+        uint64 bump = operatorNonceBump[msg.sender];
+        bytes32 tag = keccak256(abi.encodePacked("commit", msg.sender, nonce, bump, block.prevrandao, GENESIS));
+
+        signalId = computeSignalId(msg.sender, model, commitHash, eta, ttl, nonce, bump, tag);
+        SignalCommit storage s = signals[signalId];
+        if (s.state != SignalState.Nil) revert NJX_Already();
+
+        signals[signalId] = SignalCommit({
+            author: msg.sender,
+            model: model,
+            commitHash: commitHash,
+            committedAt: uint64(block.timestamp),
+            eta: eta,
+            ttl: ttl,
+            revealAt: 0,
+            state: SignalState.Committed,
+            reservedA: uint64(uint256(GENESIS)),
+            reservedB: uint64(uint256(LOOM_ID))
+        });
+
+        emit NJX_NonceUsed(msg.sender, nonce, tag);
+        emit NJX_SignalCommitted(signalId, msg.sender, model, eta, uint64(eta + ttl));
+    }
+
+    function commitSignalBySig(
+        address author,
+        bytes32 model,
+        bytes32 commitHash,
+        uint64 eta,
+        uint64 ttl,
+        uint256 nonce,
+        uint64 bump,
+        bytes32 tag,
+        bytes calldata signature
+    ) external whenActive returns (bytes32 signalId) {
+        if (author == address(0)) revert NJX_Zero();
+        if (!_hasRole[ROLE_SIGNALER][author]) revert NJX_Forbidden();
+        if (ttl == 0 || ttl > risk.maxTtl) revert NJX_Range();
+        if (eta < uint64(block.timestamp) + uint64(risk.minDelay)) revert NJX_TooSoon();
+        if (eta > uint64(block.timestamp) + uint64(risk.maxDelay)) revert NJX_TooLate();
+        if (bump < operatorNonceBump[author]) revert NJX_BadNonce();
+        if (nonce != authorNonce[author]) revert NJX_BadNonce();
+
+        bytes32 digest = _hashTypedData(
+            keccak256(abi.encode(TYPEHASH_COMMIT, bytes32(0), model, commitHash, eta, ttl, nonce, bump, tag))
+        );
+        if (!NJSign.isValid(author, digest, signature)) revert NJX_Forbidden();
+
+        authorNonce[author] = nonce + 1;
+        operatorNonceBump[author] = bump;
+
+        signalId = computeSignalId(author, model, commitHash, eta, ttl, nonce, bump, tag);
+        SignalCommit storage s = signals[signalId];
+        if (s.state != SignalState.Nil) revert NJX_Already();
+
+        signals[signalId] = SignalCommit({
+            author: author,
+            model: model,
+            commitHash: commitHash,
+            committedAt: uint64(block.timestamp),
