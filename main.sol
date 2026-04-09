@@ -862,3 +862,75 @@ contract NurJama_AII is NJPausable, NJReentrancy, NJEIP712 {
             model: model,
             commitHash: commitHash,
             committedAt: uint64(block.timestamp),
+            eta: eta,
+            ttl: ttl,
+            revealAt: 0,
+            state: SignalState.Committed,
+            reservedA: uint64(uint256(GENESIS)),
+            reservedB: uint64(uint256(LOOM_ID))
+        });
+
+        emit NJX_NonceUsed(author, nonce, tag);
+        emit NJX_OperatorNonceBumped(author, bump);
+        emit NJX_SignalCommitted(signalId, author, model, eta, uint64(eta + ttl));
+    }
+
+    function revealSignal(
+        bytes32 signalId,
+        bytes32 leaf,
+        bytes32 paramsHash
+    ) external whenActive returns (bytes32 leafOut) {
+        SignalCommit storage s = signals[signalId];
+        if (s.state != SignalState.Committed) revert NJX_BadState();
+        if (msg.sender != s.author) revert NJX_Forbidden();
+        if (block.timestamp < s.eta) revert NJX_TooSoon();
+        if (block.timestamp > s.eta + s.ttl) {
+            s.state = SignalState.Expired;
+            revert NJX_TooLate();
+        }
+        if (leaf == bytes32(0) || paramsHash == bytes32(0)) revert NJX_Zero();
+
+        bytes32 check = keccak256(abi.encodePacked("reveal", LOOM_ID, signalId, leaf, paramsHash));
+        if (check != s.commitHash) revert NJX_SignalMismatch();
+
+        s.state = SignalState.Revealed;
+        s.revealAt = uint64(block.timestamp);
+        emit NJX_SignalRevealed(signalId, msg.sender, leaf, paramsHash);
+        return leaf;
+    }
+
+    function cancelSignal(bytes32 signalId) external whenActive {
+        SignalCommit storage s = signals[signalId];
+        if (s.state == SignalState.Nil) revert NJX_NotFound();
+        if (msg.sender != s.author && msg.sender != owner && !_hasRole[ROLE_GUARDIAN][msg.sender]) revert NJX_Forbidden();
+        if (s.state == SignalState.Cancelled) revert NJX_Already();
+        if (s.state == SignalState.Expired) revert NJX_Already();
+        s.state = SignalState.Cancelled;
+    }
+
+    // ============
+    // Execution queue
+    // ============
+    function computeRunId(
+        bytes32 signalId,
+        address venue,
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256 minOutputAmount,
+        uint64 executeAfter,
+        uint64 deadline,
+        bytes32 tag
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "NJ_RUN",
+                LOOM_ID,
+                signalId,
+                venue,
+                inputToken,
+                outputToken,
+                inputAmount,
+                minOutputAmount,
+                executeAfter,
+                deadline,
